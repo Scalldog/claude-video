@@ -37,36 +37,55 @@ captions as the preferred transcript source.
 
 ### Engine
 
-`openai-whisper` — OpenAI's open-source local implementation (MIT). Despite the
-name it involves no API, no key, and no network at inference time.
+`whisper.cpp` (`ggml-org/whisper.cpp`, MIT) via Homebrew. Chosen over
+`openai-whisper` for one reason: on Apple Silicon whisper.cpp runs inference
+fully on the GPU via Metal, while `openai-whisper`'s `--device` defaults to
+`"cuda" if available else "cpu"` and so lands on CPU.
 
-Installed isolated, because the host Python is 3.14.7 and whisper documents
-3.8-3.11 support:
+Both are local. `openai-whisper` makes no API calls and needs no key — the
+"openai" in its name identifies who published the model weights, which are the
+same weights whisper.cpp runs. Privacy is not the deciding factor here; speed
+is.
 
-```
-uv tool install --python 3.11 openai-whisper
-```
+Verified 2026-09-01 against `brew info` and `examples/cli/cli.cpp`:
+
+- Formula `whisper-cpp`, stable 1.9.2, binary `whisper-cli`
+- `-m, --model` takes a GGML `.bin`
+- `-ovtt, --output-vtt` and `-of, --output-file` produce `<name>.vtt`
+- `-l, --language`, `-t, --threads`, `-pp, --print-progress`
 
 Invoked as:
 
 ```
-whisper <audio> --model turbo --output_format vtt --output_dir <workdir>
+whisper-cli -m <model.bin> -f <audio.wav> -ovtt -of <workdir>/transcript
 ```
 
-`--output_format` accepts `vtt`, which is the reason this swap is cheap: see
-Seam below.
+### Model acquisition
 
-### Known engine limitation
+Homebrew does not ship model files. They are a separate download, verified
+2026-09-01 (HTTP 200):
 
-`--device` defaults to `"cuda" if available else "cpu"`. There is no MPS
-default, so inference runs on CPU on Apple Silicon. The README's ~8x-realtime
-figure for `turbo` is a GPU measurement and does not transfer.
+| Model | Size |
+|---|---|
+| `ggml-large-v3-turbo.bin` | 1.51 GB |
+| `ggml-medium.bin` | 1.43 GB |
+| `ggml-base.bin` | 0.14 GB |
 
-This is accepted unmeasured. Implementation must benchmark a real 15-minute
-video before the design is considered settled. If wall-clock is unacceptable, a
-`whisper.cpp` backend (Metal-accelerated, `brew install whisper-cpp`, `-ovtt`)
-is the fallback — it emits VTT into the same seam, so it is an additive change,
-not a redesign. It is deliberately not built up front.
+From `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/<model>`.
+Default `large-v3-turbo`, cached under `~/.cache/whisper-cpp/`, downloaded once
+on first run with explicit user consent.
+
+### Audio preprocessing changes
+
+`whisper-cli` accepts only 16-bit PCM WAV at 16 kHz mono. The existing
+`extract_audio()` produces 64 kbps compressed audio sized to fit an upload cap:
+
+```
+ffmpeg -i <video> -vn -ar 16000 -ac 1 -c:a pcm_s16le <audio.wav>
+```
+
+Nothing is uploaded any more, so the size constraint that motivated compression
+is gone along with `plan_chunks()`, `split_audio()`, and `MAX_UPLOAD_BYTES`.
 
 ## Seam
 
@@ -102,7 +121,7 @@ source ─┬─ URL ──→ download.py (yt-dlp) ──→ native captions? �
 
 | Module | Change | Rationale |
 |---|---|---|
-| `whisper.py` | Delete; replace with `localstt.py` | Entirely API-client plumbing. Port only `extract_audio()` and `audio_duration()`. |
+| `whisper.py` | Delete; replace with `localstt.py` | Entirely API-client plumbing. Port `audio_duration()`, and `extract_audio()` rewritten to emit 16 kHz mono PCM WAV. |
 | `transcribe.py` | None | Already parses VTT. The seam is free. |
 | `setup.py` | Rewrite wizard | Key prompts become: is the `whisper` CLI present. No secrets, no `.env` key storage. |
 | `frames.py` | Two fixes | See below. |
@@ -151,8 +170,10 @@ retained unchanged.
 
 Failures are now local, so they are reported specifically and without retry:
 
-- `whisper` CLI absent: name the `uv tool install` command.
-- Model download fails: surface the path and the underlying error.
+- `whisper-cli` absent: name `brew install whisper-cpp`.
+- Model file absent: name the model, its size, and offer the download. Never
+  download 1.5 GB without consent.
+- Model download fails: surface the URL, the HTTP status, and the cache path.
 - ffmpeg fails: surface stderr verbatim rather than a generic `SystemExit`.
 
 The entire network error class — 429 backoff, upload chunking, partial-chunk
@@ -175,7 +196,11 @@ legible without commentary:
 
 ## Out of scope
 
-- A `whisper.cpp` backend. Additive later if benchmarking demands it.
+- Any second transcription backend. One local engine is enough; a fallback
+  would be speculative work.
+- Core ML / Apple Neural Engine encoder builds. whisper.cpp supports them via a
+  separate build process; the Homebrew bottle with Metal is expected to be fast
+  enough. Revisit only if measurement says otherwise.
 - Renaming the skill or the `/watch` command. Muscle memory and the published
   SKILL.md are preserved.
 - Upstreaming the two defect fixes to `bradautomates/claude-video`. Worth
@@ -183,7 +208,8 @@ legible without commentary:
 
 ## Open questions
 
-1. Which Whisper model is the default — `turbo` is the fastest multilingual
-   option but is not trained for translation. Confirm before implementation if
-   non-English sources matter.
-2. Whether CPU wall-clock is acceptable. Resolved by benchmark, not discussion.
+1. Whether `large-v3-turbo` is the right default. It is the fastest of the
+   large models, but the turbo family is not trained for translation — a
+   non-English source transcribes in its own language rather than translating
+   to English. If translation matters, the default becomes `large-v3` and the
+   run gets slower. Currently assumed English-language sources.
