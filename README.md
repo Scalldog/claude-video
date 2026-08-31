@@ -171,7 +171,7 @@ Captions cover the majority of public videos for free. The whisper.cpp fallback 
 |------------|---------------|------|
 | Download + native captions | `yt-dlp` + `ffmpeg` | Free |
 | Local transcription fallback | `whisper-cpp` + a GGML model (default `large-v3-turbo`, ~1.5 GB, one-time download) | Free — your machine's compute only |
-| Disable transcription entirely | `--no-transcript` | Free, frames-only when no captions |
+| Skip the local Whisper fallback | `--no-transcript` (native captions still run) | Free, frames-only when no captions |
 
 ## Usage
 

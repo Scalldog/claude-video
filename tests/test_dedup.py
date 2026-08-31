@@ -140,7 +140,12 @@ def test_scene_engine_reports_zero_dedup_on_distinct(cut_clip: Path, tmp_path: P
 def test_topup_frames_are_deduped_before_merge(tmp_path: Path):
     """9 cuts followed by 6s of one static color: the top-up uniform-samples
     the whole clip, so most of its candidates land on the static tail and must
-    collapse via dedup exactly like the fallback branch's own extract() does."""
+    collapse via dedup exactly like the fallback branch's own extract() does.
+
+    The adjacency check below groups survivors by source directory
+    (scene dir vs topup dir) because _thumb_frames needs one contiguous
+    numbered sequence per directory, and a top-up run merges frame_*.jpg
+    (scene) with topup/frame_*.jpg."""
     from conftest import build_cut_clip, build_static_clip
 
     cuts = tmp_path / "cuts.mp4"
@@ -170,16 +175,13 @@ def test_topup_frames_are_deduped_before_merge(tmp_path: Path):
     assert meta["deduped_count"] > 0  # would be 0 if top-up skipped dedup
     assert meta["selected_count"] < budget  # not re-topped-up to fill the cap
 
-    # _thumb_frames needs one contiguous numbered sequence per directory, and a
-    # top-up merges frame_*.jpg (scene) with topup/frame_*.jpg — so check each
-    # source directory's survivors separately rather than the merged list.
     paths = [Path(f["path"]) for f in out]
     parents = {p.parent for p in paths}
     assert len(parents) == 2  # scene dir + topup dir, or this test stops proving anything
     for parent in parents:
         group = [p for p in paths if p.parent == parent]
         thumbs = frames._thumb_frames(group)
-        assert thumbs, f"expected thumbnails for {parent}"
+        assert len(thumbs) > 1, f"expected >1 thumbnail for {parent}"
         for a, b in zip(thumbs, thumbs[1:]):
             assert frames._frame_delta(a, b) > frames.DEDUP_THRESHOLD
 

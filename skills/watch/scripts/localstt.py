@@ -17,9 +17,6 @@ DEFAULT_MODEL = "large-v3-turbo"
 MODEL_DIR = Path.home() / ".cache" / "whisper-cpp"
 MODEL_URL_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 BINARY = "whisper-cli"
-
-# The smallest real GGML model is well over 100 MB; a file below this is a
-# truncated download or an HTTP error body written by a curl run without -f.
 MODEL_MIN_SIZE_BYTES = 1_000_000
 
 
@@ -32,6 +29,7 @@ def model_url(model: str = DEFAULT_MODEL) -> str:
 
 
 def model_present(path: Path) -> bool:
+    """True when ``path`` exists and is at least ``MODEL_MIN_SIZE_BYTES``."""
     return path.exists() and path.stat().st_size >= MODEL_MIN_SIZE_BYTES
 
 
