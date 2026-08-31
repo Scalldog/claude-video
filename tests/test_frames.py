@@ -68,3 +68,11 @@ def test_scene_fallback_on_static_clip(static_clip: Path, tmp_path: Path):
     )
     assert meta["engine"] == "uniform"
     assert meta["fallback"] is True
+
+
+def test_frames_uses_fps_mode_not_removed_vsync():
+    import subprocess
+
+    source = Path(frames.__file__).read_text(encoding="utf-8")
+    assert '"-vsync"' not in source
+    assert source.count('"-fps_mode"') == 2
