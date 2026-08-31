@@ -36,10 +36,13 @@ def test_keyframe_fallback_on_static_clip(static_clip: Path, tmp_path: Path):
 
 
 def test_scene_engine_on_cut_clip(cut_clip: Path, tmp_path: Path):
+    """13 cuts against a budget of 100 mirrors the sparse-scene bug this suite
+    exists to catch, so the scene path is expected to top up toward budget."""
     out, meta = frames.extract_scene_or_uniform(
         str(cut_clip), tmp_path / "f", fps=2.0, target_frames=50, max_frames=100,
     )
-    assert meta["engine"] == "scene"
+    assert meta["engine"] == "scene+uniform"
+    assert meta["topup_count"] > 0
     assert meta["fallback"] is False
     assert len(out) >= frames.SCENE_MIN_FRAMES
 
@@ -68,6 +71,29 @@ def test_scene_fallback_on_static_clip(static_clip: Path, tmp_path: Path):
     )
     assert meta["engine"] == "uniform"
     assert meta["fallback"] is True
+
+
+def test_scene_selection_tops_up_toward_budget(tmp_path):
+    from conftest import build_cut_clip
+
+    clip = tmp_path / "sparse.mp4"
+    build_cut_clip(clip, n=10, seg=1.0)
+
+    selected, meta = frames.extract_scene_or_uniform(
+        str(clip),
+        tmp_path / "out",
+        fps=2.0,
+        target_frames=40,
+        resolution=256,
+        max_frames=40,
+    )
+
+    assert meta["engine"] == "scene+uniform"
+    assert meta["topup_count"] > 0
+    assert len(selected) > 10
+    stamps = [f["timestamp_seconds"] for f in selected]
+    assert stamps == sorted(stamps)
+    assert [f["index"] for f in selected] == list(range(len(selected)))
 
 
 def test_frames_uses_fps_mode_not_removed_vsync():

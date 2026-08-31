@@ -77,11 +77,12 @@ def test_extract_at_timestamps_caps_and_spans(cut_clip: Path, tmp_path: Path):
 
 
 def test_extract_at_timestamps_does_not_clobber_detail_frames(cut_clip: Path, tmp_path: Path):
-    """Cue frames live alongside detail frames in the same dir without deleting them."""
+    """Cue frames live alongside detail frames in the same dir without deleting
+    them; detail frames may span out_dir and out_dir/topup when topped up."""
     d = tmp_path / "f"
     scene, _ = frames.extract_scene_or_uniform(
         str(cut_clip), d, fps=2.0, target_frames=50, max_frames=100,
     )
     cues, _ = frames.extract_at_timestamps(str(cut_clip), d, [1.0, 3.0])
-    assert len(list(d.glob("frame_*.jpg"))) == len(scene)
+    assert len(list(d.rglob("frame_*.jpg"))) == len(scene)
     assert len(list(d.glob("cue_*.jpg"))) == len(cues)

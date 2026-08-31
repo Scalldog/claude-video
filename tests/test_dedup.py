@@ -125,12 +125,14 @@ def test_dedupe_perceptual_keeps_distinct_cuts(cut_clip: Path, tmp_path: Path):
 # --- engine integration: dedup runs before the cap, reports deduped_count -----
 
 def test_scene_engine_reports_zero_dedup_on_distinct(cut_clip: Path, tmp_path: Path):
+    """13 cuts against a budget of 100 tops up, so survivors span out_dir and
+    out_dir/topup — count recursively to confirm no frame is orphaned."""
     out, meta = frames.extract_scene_or_uniform(
         str(cut_clip), tmp_path / "f", fps=2.0, target_frames=50, max_frames=100,
     )
-    assert meta["engine"] == "scene"
+    assert meta["engine"] == "scene+uniform"
     assert meta["deduped_count"] == 0
-    assert len(out) == len(list((tmp_path / "f").glob("frame_*.jpg")))
+    assert len(out) == len(list((tmp_path / "f").rglob("frame_*.jpg")))
 
 
 def test_uniform_fallback_dedupes_static(static_clip: Path, tmp_path: Path):

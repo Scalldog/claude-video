@@ -24,6 +24,7 @@ SCENE_THRESHOLD = 0.20
 # this is a low floor — NOT the frame budget — so normal videos with cuts use
 # the (single-pass) scene engine instead of paying for a wasted second decode.
 SCENE_MIN_FRAMES = 8
+SCENE_TOPUP_FRACTION = 0.5
 # Below this many decoded keyframes a clip is too sparse for keyframe coverage
 # (very short or oddly encoded), so the cheap tier falls back to uniform.
 KEYFRAME_MIN = 4
@@ -543,10 +544,28 @@ def extract_scene_or_uniform(
         deduped, n_dropped = dedupe_perceptual(scene_frames) if dedup else (scene_frames, 0)
         cap = len(deduped) if max_frames is None else max_frames
         selected = _even_sample(deduped, cap)
+
+        budget = cap if max_frames is not None else target_frames
+        topup: list[dict] = []
+        if len(selected) < int(budget * SCENE_TOPUP_FRACTION):
+            topup = extract(
+                video_path,
+                out_dir / "topup",
+                fps=fps,
+                resolution=resolution,
+                max_frames=budget - len(selected),
+                start_seconds=start_seconds,
+                end_seconds=end_seconds,
+            )
+            for frame in topup:
+                frame["reason"] = "uniform-topup"
+            selected = merge_frames(selected, topup)
+
         return selected, {
-            "engine": "scene",
+            "engine": "scene+uniform" if topup else "scene",
             "candidate_count": scene_count,
             "deduped_count": n_dropped,
+            "topup_count": len(topup),
             "selected_count": len(selected),
             "fallback": False,
         }
@@ -568,6 +587,7 @@ def extract_scene_or_uniform(
         "engine": "uniform",
         "candidate_count": scene_count,
         "deduped_count": n_dropped,
+        "topup_count": 0,
         "selected_count": len(frames),
         "fallback": True,
     }
