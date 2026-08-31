@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import watch
+
 WATCH = Path(__file__).resolve().parent.parent / "skills" / "watch" / "scripts" / "watch.py"
+SCRIPTS = Path(watch.__file__).resolve().parent
 
 
 def _run(clip: Path, *args: str, env_extra: dict | None = None) -> str:
@@ -15,11 +18,31 @@ def _run(clip: Path, *args: str, env_extra: dict | None = None) -> str:
     if env_extra:
         env.update(env_extra)
     proc = subprocess.run(
-        [sys.executable, str(WATCH), str(clip), "--no-whisper", *args],
+        [sys.executable, str(WATCH), str(clip), "--no-transcript", *args],
         capture_output=True, text=True, env=env,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
+
+
+def test_no_hosted_whisper_client_remains():
+    assert not (SCRIPTS / "whisper.py").exists()
+    source = (SCRIPTS / "watch.py").read_text(encoding="utf-8")
+    for banned in ("GROQ_API_KEY", "OPENAI_API_KEY", "load_api_key", "api.groq.com"):
+        assert banned not in source
+
+
+def test_cli_exposes_model_and_language_flags():
+    parser = watch.build_parser()
+    args = parser.parse_args(["video.mp4", "--model", "base", "--language", "fr"])
+    assert args.model == "base"
+    assert args.language == "fr"
+
+
+def test_cli_defaults_to_turbo_and_english():
+    args = watch.build_parser().parse_args(["video.mp4"])
+    assert args.model == "large-v3-turbo"
+    assert args.language == "en"
 
 
 def test_efficient_uses_keyframe_engine(cut_clip: Path):
