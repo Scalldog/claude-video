@@ -133,15 +133,23 @@ def test_topup_covers_the_tail_of_the_range(tmp_path: Path):
     """The top-up pass must span the whole clip, not stop short partway
     through — a `-frames:v N` cap on a single ffmpeg pass makes it stop after
     N *output* frames rather than spreading N frames across the range, so a
-    naive `max_frames=shortfall` request truncates before reaching the end."""
-    clip = _build_cuts_then_static_clip(tmp_path, cuts_seg=0.4, tail_duration=21.4)
+    naive `max_frames=shortfall` request truncates before reaching the end.
+
+    ``max_frames`` (the cap the caller passed) is only a generous topup
+    extraction cap while it is >= ``fps * duration`` — an explicit `--fps`
+    override recomputes ``target_frames`` uncapped by the frame cap (see
+    watch.py), so ``max_frames`` alone can fall *below* the natural yield.
+    This case is pinned deliberately below that natural yield
+    (``target_frames=40`` at ``fps=2.0`` over a 20s clip, but
+    ``max_frames=30``) so the test can't pass on the boundary case where
+    ``max_frames == fps * duration`` happens to already cover the tail."""
+    clip = _build_cuts_then_static_clip(tmp_path, cuts_seg=0.4, tail_duration=16.4)
     meta = frames.get_metadata(str(clip))
     duration = meta["duration_seconds"]
-    fps, target = frames.auto_fps(duration, max_frames=25)
 
     out, frame_meta = frames.extract_scene_or_uniform(
-        str(clip), tmp_path / "f", fps=fps, target_frames=target,
-        max_frames=25, dedup=False,
+        str(clip), tmp_path / "f", fps=2.0, target_frames=40,
+        max_frames=30, dedup=False,
     )
 
     assert frame_meta["engine"] == "scene+uniform"

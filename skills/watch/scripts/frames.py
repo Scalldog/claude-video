@@ -555,7 +555,7 @@ def extract_scene_or_uniform(
                 out_dir / "topup",
                 fps=fps,
                 resolution=resolution,
-                max_frames=budget,
+                max_frames=max(budget, target_frames),
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
             )
