@@ -1,6 +1,7 @@
 """Frame-delta dedup: per-pixel difference, greedy de-duplication, integration."""
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import frames
@@ -125,12 +126,64 @@ def test_dedupe_perceptual_keeps_distinct_cuts(cut_clip: Path, tmp_path: Path):
 # --- engine integration: dedup runs before the cap, reports deduped_count -----
 
 def test_scene_engine_reports_zero_dedup_on_distinct(cut_clip: Path, tmp_path: Path):
+    """13 cuts already clear half of a budget of 20, so no top-up round-trip
+    runs and this isolates dedup reporting to the scene candidates alone."""
     out, meta = frames.extract_scene_or_uniform(
-        str(cut_clip), tmp_path / "f", fps=2.0, target_frames=50, max_frames=100,
+        str(cut_clip), tmp_path / "f", fps=2.0, target_frames=50, max_frames=20,
     )
     assert meta["engine"] == "scene"
+    assert meta["topup_count"] == 0
     assert meta["deduped_count"] == 0
-    assert len(out) == len(list((tmp_path / "f").glob("frame_*.jpg")))
+    assert len(out) == len(list((tmp_path / "f").rglob("frame_*.jpg")))
+
+
+def test_topup_frames_are_deduped_before_merge(tmp_path: Path):
+    """9 cuts followed by 6s of one static color: the top-up uniform-samples
+    the whole clip, so most of its candidates land on the static tail and must
+    collapse via dedup exactly like the fallback branch's own extract() does.
+
+    The adjacency check below groups survivors by source directory
+    (scene dir vs topup dir) because _thumb_frames needs one contiguous
+    numbered sequence per directory, and a top-up run merges frame_*.jpg
+    (scene) with topup/frame_*.jpg."""
+    from conftest import build_cut_clip, build_static_clip
+
+    cuts = tmp_path / "cuts.mp4"
+    tail = tmp_path / "tail.mp4"
+    build_cut_clip(cuts, n=9, seg=0.2)
+    build_static_clip(tail, duration=6.0)
+    combined = tmp_path / "sparse_static.mp4"
+    filelist = tmp_path / "concat.txt"
+    filelist.write_text(f"file '{cuts}'\nfile '{tail}'\n")
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(filelist),
+            "-c", "copy", str(combined),
+        ],
+        check=True,
+    )
+
+    budget = 60
+    out, meta = frames.extract_scene_or_uniform(
+        str(combined), tmp_path / "f", fps=2.0, target_frames=budget,
+        resolution=256, max_frames=budget, dedup=True,
+    )
+
+    assert meta["engine"] == "scene+uniform"
+    assert meta["topup_count"] > 0
+    assert meta["deduped_count"] > 0  # would be 0 if top-up skipped dedup
+    assert meta["selected_count"] < budget  # not re-topped-up to fill the cap
+
+    paths = [Path(f["path"]) for f in out]
+    parents = {p.parent for p in paths}
+    assert len(parents) == 2  # scene dir + topup dir, or this test stops proving anything
+    for parent in parents:
+        group = [p for p in paths if p.parent == parent]
+        thumbs = frames._thumb_frames(group)
+        assert len(thumbs) > 1, f"expected >1 thumbnail for {parent}"
+        for a, b in zip(thumbs, thumbs[1:]):
+            assert frames._frame_delta(a, b) > frames.DEDUP_THRESHOLD
 
 
 def test_uniform_fallback_dedupes_static(static_clip: Path, tmp_path: Path):

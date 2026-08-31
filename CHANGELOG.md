@@ -2,6 +2,22 @@
 
 All notable changes to `/watch` are documented here.
 
+## [0.3.0] — 2026-09-01
+
+### Changed
+- **Breaking:** transcription is now local via whisper.cpp. `--whisper` and
+  `--no-whisper` are replaced by `--model`, `--language` and `--no-transcript`.
+  No API key is required and no audio leaves the machine.
+- Sparse scene selection is topped up with uniform frames, so screencasts no
+  longer return a handful of frames against a large budget.
+
+### Fixed
+- Frame extraction failed on ffmpeg 7 and later, which removed `-vsync`.
+- The session hook and `config.py` disagreed on duplicate keys in `.env`.
+
+### Removed
+- The hosted Groq/OpenAI Whisper client, its upload chunking and its retry logic.
+
 ## [0.2.0] — 2026-06-29
 
 ### Added

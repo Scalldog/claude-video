@@ -1,4 +1,4 @@
-"""setup.py --json surfaces the resolved watch detail."""
+"""setup.py --json surfaces the resolved watch detail and whisper.cpp readiness."""
 from __future__ import annotations
 
 import json
@@ -13,9 +13,6 @@ SETUP = Path(__file__).resolve().parent.parent / "skills" / "watch" / "scripts" 
 def _run(args, *, home=None, extra_env=None):
     env = dict(os.environ)
     env.pop("WATCH_DETAIL", None)
-    # Don't let a real key in the developer's shell env leak into the test.
-    env.pop("GROQ_API_KEY", None)
-    env.pop("OPENAI_API_KEY", None)
     env.pop("SETUP_COMPLETE", None)
     if home is not None:
         env["HOME"] = str(home)
@@ -36,6 +33,14 @@ def _write_env(home: Path, body: str) -> None:
     f.chmod(0o600)
 
 
+def _write_model(home: Path, model: str = "large-v3-turbo", size: int = 2_000_000) -> Path:
+    cache = home / ".cache" / "whisper-cpp"
+    cache.mkdir(parents=True, exist_ok=True)
+    model_file = cache / f"ggml-{model}.bin"
+    model_file.write_bytes(b"\0" * size)
+    return model_file
+
+
 def test_json_reports_watch_detail():
     proc = _run(["--json"])
     assert proc.returncode == 0, proc.stderr
@@ -43,38 +48,75 @@ def test_json_reports_watch_detail():
     assert data["watch_detail"] == "balanced"
 
 
-def test_keyless_completed_setup_proceeds_silently(tmp_path):
-    """A user who finished setup without a key must NOT be nagged forever."""
-    _write_env(tmp_path, "GROQ_API_KEY=\nOPENAI_API_KEY=\nSETUP_COMPLETE=true\n")
+def test_setup_json_reports_model_state():
+    result = subprocess.run(
+        [sys.executable, str(SETUP), "--json"], capture_output=True, text=True
+    )
+    data = json.loads(result.stdout)
+    assert "model_present" in data
+    assert "model_path" in data
+    assert data["status"] in {"ready", "needs_install", "needs_model", "needs_install_and_model"}
+
+
+def test_setup_no_longer_mentions_api_keys():
+    source = SETUP.read_text(encoding="utf-8")
+    for banned in ("GROQ_API_KEY", "OPENAI_API_KEY", "console.groq.com", "platform.openai.com"):
+        assert banned not in source
+
+
+def test_modelless_completed_setup_proceeds_silently(tmp_path):
+    """A user who finished setup without ever downloading the model must NOT
+    be nagged forever — declining the 1.5 GB download (captions-only) is a
+    legitimate, deliberate choice, and SETUP_COMPLETE=true is how they say
+    so."""
+    _write_env(tmp_path, "SETUP_COMPLETE=true\n")
     chk = _run(["--check"], home=tmp_path)
-    assert chk.returncode == 0, f"keyless-complete should pass --check; got {chk.returncode}: {chk.stderr}"
+    assert chk.returncode == 0, f"modelless-complete should pass --check; got {chk.returncode}: {chk.stderr}"
     assert chk.stdout == "" and chk.stderr == ""
 
     js = json.loads(_run(["--json"], home=tmp_path).stdout)
     assert js["can_proceed"] is True
     assert js["first_run"] is False
     assert js["setup_complete"] is True
-    # status still encourages a key even though we can proceed
-    assert js["status"] == "needs_key"
+    assert js["model_present"] is False
+    # status still encourages the model even though we can proceed
+    assert js["status"] == "needs_model"
 
 
-def test_keyless_first_run_is_encouraged(tmp_path):
-    """Genuine first run with no key: --check reports exit 3 (encourage a key)."""
-    _write_env(tmp_path, "GROQ_API_KEY=\nOPENAI_API_KEY=\n")
+def test_modelless_first_run_is_encouraged(tmp_path):
+    """Genuine first run with no config file and no model: --check reports
+    exit 3 and first_run is True — this is the case setup_complete does NOT
+    cover, so the user is still told what's missing."""
     chk = _run(["--check"], home=tmp_path)
     assert chk.returncode == 3, chk.stderr
 
     js = json.loads(_run(["--json"], home=tmp_path).stdout)
     assert js["can_proceed"] is False
     assert js["first_run"] is True
+    assert js["model_present"] is False
+    assert js["setup_complete"] is False
 
 
-def test_key_present_is_ready(tmp_path):
-    _write_env(tmp_path, "GROQ_API_KEY=sk-test-abc\n")
+def test_model_present_is_ready(tmp_path):
+    _write_model(tmp_path)
     chk = _run(["--check"], home=tmp_path)
     assert chk.returncode == 0, chk.stderr
+    assert chk.stdout == "" and chk.stderr == ""
 
     js = json.loads(_run(["--json"], home=tmp_path).stdout)
     assert js["status"] == "ready"
     assert js["can_proceed"] is True
-    assert js["whisper_backend"] == "groq"
+    assert js["model_present"] is True
+
+
+def test_truncated_model_file_is_treated_as_absent(tmp_path):
+    """A curl run without -f, or one interrupted mid-download, leaves a file
+    that exists but is far smaller than any real GGML model — that must not
+    be mistaken for a ready model."""
+    _write_model(tmp_path, size=1024)
+    chk = _run(["--check"], home=tmp_path)
+    assert chk.returncode == 3, chk.stderr
+
+    js = json.loads(_run(["--json"], home=tmp_path).stdout)
+    assert js["model_present"] is False
+    assert js["status"] == "needs_model"
