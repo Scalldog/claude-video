@@ -18,6 +18,7 @@ Design:
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -27,7 +28,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from config import get_config  # noqa: E402
+from config import get_config, read_env_file  # noqa: E402
 import localstt  # noqa: E402
 
 
@@ -51,10 +52,17 @@ def _which(name: str) -> str | None:
 
 
 def _check_binaries() -> list[str]:
-    missing = [b for b in ("ffmpeg", "ffprobe") if _which(b) is None]
+    missing = [b for b in ("ffmpeg", "ffprobe", "yt-dlp") if _which(b) is None]
     if localstt.find_binary() is None:
         missing.append("whisper-cli")
     return missing
+
+
+def _setup_complete() -> bool:
+    value = os.environ.get("SETUP_COMPLETE")
+    if not value:
+        value = read_env_file(CONFIG_FILE).get("SETUP_COMPLETE")
+    return value == "true"
 
 
 def _scaffold_env() -> bool:
@@ -100,6 +108,9 @@ def _brew_pkg(missing: list[str]) -> list[str]:
         if bin_name in ("ffmpeg", "ffprobe"):
             if "ffmpeg" not in pkgs:
                 pkgs.append("ffmpeg")
+        elif bin_name == "yt-dlp":
+            if "yt-dlp" not in pkgs:
+                pkgs.append("yt-dlp")
         elif bin_name == "whisper-cli":
             if "whisper-cpp" not in pkgs:
                 pkgs.append("whisper-cpp")
@@ -130,6 +141,8 @@ def _install_hint_linux(missing: list[str]) -> str:
     hints = []
     if "ffmpeg" in pkgs:
         hints.append("apt: `sudo apt install ffmpeg` or dnf: `sudo dnf install ffmpeg`")
+    if "yt-dlp" in pkgs:
+        hints.append("`pipx install yt-dlp` (recommended) or `pip install --user yt-dlp`")
     if "whisper-cpp" in pkgs:
         hints.append(
             "`brew install whisper-cpp` (Homebrew on Linux) or build from source: "
@@ -143,6 +156,8 @@ def _install_hint_windows(missing: list[str]) -> str:
     hints = []
     if "ffmpeg" in pkgs:
         hints.append("winget: `winget install Gyan.FFmpeg`")
+    if "yt-dlp" in pkgs:
+        hints.append("winget: `winget install yt-dlp.yt-dlp` or pip: `pip install --user yt-dlp`")
     if "whisper-cpp" in pkgs:
         hints.append("build from source: https://github.com/ggerganov/whisper.cpp")
     return "\n  ".join(hints) if hints else "nothing to install"
@@ -157,10 +172,22 @@ def offer_model_download(model: str = localstt.DEFAULT_MODEL) -> bool:
 
 
 def _status() -> dict:
-    """Structured preflight snapshot for whisper.cpp readiness."""
+    """Structured preflight snapshot for whisper.cpp readiness.
+
+    `status` describes the *ideal* state, so a completed-but-modelless
+    install still reports `needs_model` — that's the agent's cue to
+    encourage downloading it.
+
+    `can_proceed` is the operational gate: /watch can run as long as the
+    binaries are present AND either the model is there or setup was already
+    completed once (a captions-only workflow, declining the 1.5 GB download,
+    is a legitimate deliberate choice). A modelless user who completed setup
+    is NOT nagged on every call; a genuine first run is.
+    """
     missing = _check_binaries()
     model_file = localstt.model_path(localstt.DEFAULT_MODEL)
     model_present = model_file.exists()
+    setup_complete = _setup_complete()
     cfg = get_config()
 
     if missing and not model_present:
@@ -174,11 +201,12 @@ def _status() -> dict:
 
     return {
         "status": state,
-        "can_proceed": not missing and model_present,
+        "can_proceed": not missing and (model_present or setup_complete),
         "first_run": not CONFIG_FILE.exists(),
         "missing_binaries": missing,
         "model_present": model_present,
         "model_path": str(model_file),
+        "setup_complete": setup_complete,
         "config_file": str(CONFIG_FILE),
         "watch_detail": cfg["detail"],
         "platform": platform.system(),
@@ -188,12 +216,14 @@ def _status() -> dict:
 def cmd_check() -> int:
     """Silent-on-success preflight.
 
-    Exit 0 with no output when ffmpeg, ffprobe, and whisper-cli are all on
-    PATH and the whisper.cpp model file is present.
+    Exit 0 with no output when /watch can run: ffmpeg, ffprobe, yt-dlp, and
+    whisper-cli are all on PATH, and either the whisper.cpp model is present
+    or setup has already been completed once. A modelless user who finished
+    setup is never nagged again on follow-up calls.
 
     On a state that blocks /watch, print one actionable line to stderr:
       2 → binaries missing
-      3 → model file missing
+      3 → genuine first run with no model (encourage downloading one)
       4 → both missing
     """
     s = _status()

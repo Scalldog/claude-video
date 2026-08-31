@@ -13,6 +13,7 @@ SETUP = Path(__file__).resolve().parent.parent / "skills" / "watch" / "scripts" 
 def _run(args, *, home=None, extra_env=None):
     env = dict(os.environ)
     env.pop("WATCH_DETAIL", None)
+    env.pop("SETUP_COMPLETE", None)
     if home is not None:
         env["HOME"] = str(home)
         env["USERPROFILE"] = str(home)  # Windows
@@ -63,24 +64,29 @@ def test_setup_no_longer_mentions_api_keys():
         assert banned not in source
 
 
-def test_completed_setup_without_model_is_not_treated_as_first_run(tmp_path):
-    """A user who has already run setup is not treated like a stranger just
-    because the model download hasn't happened yet — but the model is a hard
-    requirement now, so --check still nags until it's there."""
+def test_modelless_completed_setup_proceeds_silently(tmp_path):
+    """A user who finished setup without ever downloading the model must NOT
+    be nagged forever — declining the 1.5 GB download (captions-only) is a
+    legitimate, deliberate choice, and SETUP_COMPLETE=true is how they say
+    so."""
     _write_env(tmp_path, "SETUP_COMPLETE=true\n")
     chk = _run(["--check"], home=tmp_path)
-    assert chk.returncode == 3, chk.stderr
+    assert chk.returncode == 0, f"modelless-complete should pass --check; got {chk.returncode}: {chk.stderr}"
+    assert chk.stdout == "" and chk.stderr == ""
 
     js = json.loads(_run(["--json"], home=tmp_path).stdout)
+    assert js["can_proceed"] is True
     assert js["first_run"] is False
+    assert js["setup_complete"] is True
     assert js["model_present"] is False
-    assert js["can_proceed"] is False
+    # status still encourages the model even though we can proceed
     assert js["status"] == "needs_model"
 
 
 def test_modelless_first_run_is_encouraged(tmp_path):
     """Genuine first run with no config file and no model: --check reports
-    exit 3 and first_run is True."""
+    exit 3 and first_run is True — this is the case setup_complete does NOT
+    cover, so the user is still told what's missing."""
     chk = _run(["--check"], home=tmp_path)
     assert chk.returncode == 3, chk.stderr
 
@@ -88,6 +94,7 @@ def test_modelless_first_run_is_encouraged(tmp_path):
     assert js["can_proceed"] is False
     assert js["first_run"] is True
     assert js["model_present"] is False
+    assert js["setup_complete"] is False
 
 
 def test_model_present_is_ready(tmp_path):

@@ -35,8 +35,9 @@ MODEL="$HOME/.cache/whisper-cpp/ggml-large-v3-turbo.bin"
 
 SETUP_COMPLETE="$(read_key SETUP_COMPLETE)"
 
-# Fully configured → silent (Claude can surface status on demand via --check).
-if [[ "$SETUP_COMPLETE" == "true" && -n "$HAS_FFMPEG" && -n "$HAS_YTDLP" && -n "$HAS_WHISPER" && -f "$MODEL" ]]; then
+# Fully configured, or setup already completed once (a captions-only
+# workflow, declining the model download, is a deliberate choice) → silent.
+if [[ "$SETUP_COMPLETE" == "true" && -n "$HAS_FFMPEG" && -n "$HAS_YTDLP" && -n "$HAS_WHISPER" ]]; then
   exit 0
 fi
 
