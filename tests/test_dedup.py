@@ -169,10 +169,19 @@ def test_topup_frames_are_deduped_before_merge(tmp_path: Path):
     assert meta["topup_count"] > 0
     assert meta["deduped_count"] > 0  # would be 0 if top-up skipped dedup
     assert meta["selected_count"] < budget  # not re-topped-up to fill the cap
+
+    # _thumb_frames needs one contiguous numbered sequence per directory, and a
+    # top-up merges frame_*.jpg (scene) with topup/frame_*.jpg — so check each
+    # source directory's survivors separately rather than the merged list.
     paths = [Path(f["path"]) for f in out]
-    thumbs = frames._thumb_frames(paths)
-    for a, b in zip(thumbs, thumbs[1:]):
-        assert frames._frame_delta(a, b) > frames.DEDUP_THRESHOLD
+    parents = {p.parent for p in paths}
+    assert len(parents) == 2  # scene dir + topup dir, or this test stops proving anything
+    for parent in parents:
+        group = [p for p in paths if p.parent == parent]
+        thumbs = frames._thumb_frames(group)
+        assert thumbs, f"expected thumbnails for {parent}"
+        for a, b in zip(thumbs, thumbs[1:]):
+            assert frames._frame_delta(a, b) > frames.DEDUP_THRESHOLD
 
 
 def test_uniform_fallback_dedupes_static(static_clip: Path, tmp_path: Path):
