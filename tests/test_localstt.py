@@ -65,6 +65,51 @@ def test_transcribe_raises_when_model_missing(tmp_path, monkeypatch):
     assert "absent.bin" in str(exc.value)
 
 
+# --- VTT discovery: out_prefix.with_suffix(".vtt") lookup + its error path ---
+
+def _stub_ready_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(localstt, "find_binary", lambda: "whisper-cli")
+    model_file = tmp_path / "ggml-large-v3-turbo.bin"
+    model_file.write_bytes(b"x" * localstt.MODEL_MIN_SIZE_BYTES)
+    monkeypatch.setattr(localstt, "model_path", lambda model=None: model_file)
+    monkeypatch.setattr(localstt, "extract_audio", lambda video_path, out_path: out_path)
+
+
+class _FakeResult:
+    def __init__(self, returncode=0, stderr=""):
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def test_transcribe_discovers_vtt_at_out_prefix(tmp_path, monkeypatch):
+    _stub_ready_model(monkeypatch, tmp_path)
+
+    def fake_run(cmd, capture_output=True, text=True):
+        out_prefix = Path(cmd[cmd.index("-of") + 1])
+        out_prefix.with_suffix(".vtt").write_text(
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n", encoding="utf-8"
+        )
+        return _FakeResult()
+
+    monkeypatch.setattr(localstt.subprocess, "run", fake_run)
+
+    segments, engine = localstt.transcribe_video("video.mp4", tmp_path / "audio.wav")
+    assert segments == [{"start": 0.0, "end": 1.0, "text": "hello"}]
+    assert engine == "whisper.cpp (large-v3-turbo)"
+
+
+def test_transcribe_raises_when_no_vtt_produced(tmp_path, monkeypatch):
+    """whisper-cli can exit 0 and still leave no VTT (e.g. an unwritable
+    output dir) — that must surface as an actionable error, not a silent
+    empty transcript."""
+    _stub_ready_model(monkeypatch, tmp_path)
+    monkeypatch.setattr(localstt.subprocess, "run", lambda *a, **k: _FakeResult())
+
+    with pytest.raises(SystemExit) as exc:
+        localstt.transcribe_video("video.mp4", tmp_path / "audio.wav")
+    assert "produced no VTT" in str(exc.value)
+
+
 def test_extract_audio_produces_16k_mono_wav(tmp_path):
     from conftest import build_cut_clip
 
