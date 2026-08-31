@@ -557,6 +557,9 @@ def extract_scene_or_uniform(
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
             )
+            if dedup:
+                topup, n_topup_dropped = dedupe_perceptual(topup)
+                n_dropped += n_topup_dropped
             for frame in topup:
                 frame["reason"] = "uniform-topup"
             selected = merge_frames(selected, topup)
