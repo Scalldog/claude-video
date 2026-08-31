@@ -152,7 +152,7 @@ Optional flags:
 - `--out-dir DIR` — keep working files somewhere specific (default: an auto-generated tmp dir)
 - `--model NAME` — whisper.cpp model (default `large-v3-turbo`; also `large-v3`, `medium`, `base`)
 - `--language LANG` — spoken language, or `auto` to detect (default `en`)
-- `--no-transcript` — skip transcription entirely, frames only
+- `--no-transcript` — skip the local Whisper fallback; native captions still run when present
 - `--no-dedup` — keep near-duplicate frames. By default a frame-delta pass drops frames that are visually near-identical to the previous kept one (held slides, static screen recordings, paused video) so the frame budget goes to distinct content; the report's **Frames** line notes how many were dropped. Pass this only if the user needs every sampled frame (e.g. judging subtle frame-to-frame motion).
 
 ### Focusing on a section (higher frame rate)
@@ -239,6 +239,10 @@ GPU via Metal on Apple Silicon — roughly 22x realtime.
 The turbo family is not trained for translation. A non-English source
 transcribes in its own language; pass `--model large-v3` if you need English
 output from other languages.
+
+Setup preflight only checks for the default `large-v3-turbo` model. If the
+user has downloaded a different `--model`, preflight will still report the
+model missing.
 
 ## Failure modes and handling
 

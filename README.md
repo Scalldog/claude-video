@@ -161,6 +161,8 @@ On the first `/watch` call, the skill runs `scripts/setup.py --check`. If `ffmpe
 
 After setup, preflight is silent and `/watch` just works. The check is a sub-100ms lookup, so it doesn't slow you down on subsequent runs.
 
+The preflight only checks for the default `large-v3-turbo` model; if you pass `--model` with a different one, preflight will still report it missing even once you've downloaded it.
+
 ## Local transcription
 
 Captions cover the majority of public videos for free. The whisper.cpp fallback only kicks in when a video genuinely has no caption track — typically local files, TikToks, some Vimeos, and the occasional caption-less YouTube upload. There's no API key to manage and nothing ever leaves your machine.
@@ -196,7 +198,7 @@ Other knobs (passed to `scripts/watch.py`):
 - `--fps F` — override the auto-fps calculation (still capped at 2 fps).
 - `--model NAME` — whisper.cpp model to use (default `large-v3-turbo`; also `large-v3`, `medium`, `base`).
 - `--language LANG` — spoken language, or `auto` to detect (default `en`).
-- `--no-transcript` — disable transcription entirely; frames only.
+- `--no-transcript` — skip the local Whisper fallback; native captions still run when present.
 - `--no-dedup` — keep near-duplicate frames. By default a frame-delta pass drops frames that are visually near-identical to the one before them (held slides, static screen recordings, paused video), so the frame budget is spent on distinct content; this flag turns that off.
 - `--out-dir DIR` — keep working files somewhere specific (default: auto-generated tmp dir).
 
