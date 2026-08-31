@@ -167,8 +167,8 @@ def offer_model_download(model: str = localstt.DEFAULT_MODEL) -> bool:
     dest = localstt.model_path(model)
     url = localstt.model_url(model)
     print(f"[setup] model {dest.name} is not present (~1.5 GB).")
-    print(f"[setup] download it with:\n  curl -L --create-dirs -o {dest} {url}")
-    return dest.exists()
+    print(f"[setup] download it with:\n  curl -fL --create-dirs -o {dest} {url}")
+    return localstt.model_present(dest)
 
 
 def _status() -> dict:
@@ -186,25 +186,25 @@ def _status() -> dict:
     """
     missing = _check_binaries()
     model_file = localstt.model_path(localstt.DEFAULT_MODEL)
-    model_present = model_file.exists()
+    model_ready = localstt.model_present(model_file)
     setup_complete = _setup_complete()
     cfg = get_config()
 
-    if missing and not model_present:
+    if missing and not model_ready:
         state = "needs_install_and_model"
     elif missing:
         state = "needs_install"
-    elif not model_present:
+    elif not model_ready:
         state = "needs_model"
     else:
         state = "ready"
 
     return {
         "status": state,
-        "can_proceed": not missing and (model_present or setup_complete),
+        "can_proceed": not missing and (model_ready or setup_complete),
         "first_run": not CONFIG_FILE.exists(),
         "missing_binaries": missing,
-        "model_present": model_present,
+        "model_present": model_ready,
         "model_path": str(model_file),
         "setup_complete": setup_complete,
         "config_file": str(CONFIG_FILE),
@@ -289,7 +289,7 @@ def cmd_install() -> int:
     else:
         print(f"[setup] config exists: {CONFIG_FILE}")
 
-    if localstt.model_path(localstt.DEFAULT_MODEL).exists():
+    if localstt.model_present(localstt.model_path(localstt.DEFAULT_MODEL)):
         _write_setup_complete()
         print("[setup] ready. whisper.cpp model is present.")
         if installed_deps:

@@ -36,6 +36,20 @@ def test_model_path_and_url_agree_on_name():
     assert localstt.model_url("base").endswith("ggml-base.bin")
 
 
+def test_model_present_requires_minimum_size(tmp_path):
+    small = tmp_path / "ggml-base.bin"
+    small.write_bytes(b"x" * (localstt.MODEL_MIN_SIZE_BYTES - 1))
+    assert localstt.model_present(small) is False
+
+    big = tmp_path / "ggml-large.bin"
+    big.write_bytes(b"x" * localstt.MODEL_MIN_SIZE_BYTES)
+    assert localstt.model_present(big) is True
+
+
+def test_model_present_is_false_when_missing(tmp_path):
+    assert localstt.model_present(tmp_path / "absent.bin") is False
+
+
 def test_transcribe_raises_when_binary_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(localstt, "find_binary", lambda: None)
     with pytest.raises(SystemExit) as exc:

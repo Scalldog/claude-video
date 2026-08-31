@@ -33,11 +33,11 @@ def _write_env(home: Path, body: str) -> None:
     f.chmod(0o600)
 
 
-def _write_model(home: Path, model: str = "large-v3-turbo") -> Path:
+def _write_model(home: Path, model: str = "large-v3-turbo", size: int = 2_000_000) -> Path:
     cache = home / ".cache" / "whisper-cpp"
     cache.mkdir(parents=True, exist_ok=True)
     model_file = cache / f"ggml-{model}.bin"
-    model_file.write_bytes(b"")
+    model_file.write_bytes(b"\0" * size)
     return model_file
 
 
@@ -107,3 +107,16 @@ def test_model_present_is_ready(tmp_path):
     assert js["status"] == "ready"
     assert js["can_proceed"] is True
     assert js["model_present"] is True
+
+
+def test_truncated_model_file_is_treated_as_absent(tmp_path):
+    """A curl run without -f, or one interrupted mid-download, leaves a file
+    that exists but is far smaller than any real GGML model — that must not
+    be mistaken for a ready model."""
+    _write_model(tmp_path, size=1024)
+    chk = _run(["--check"], home=tmp_path)
+    assert chk.returncode == 3, chk.stderr
+
+    js = json.loads(_run(["--json"], home=tmp_path).stdout)
+    assert js["model_present"] is False
+    assert js["status"] == "needs_model"

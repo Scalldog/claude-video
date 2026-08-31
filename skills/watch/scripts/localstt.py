@@ -2,7 +2,6 @@
 """Local speech-to-text via whisper.cpp. No network, no API key."""
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
@@ -19,6 +18,10 @@ MODEL_DIR = Path.home() / ".cache" / "whisper-cpp"
 MODEL_URL_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 BINARY = "whisper-cli"
 
+# The smallest real GGML model is well over 100 MB; a file below this is a
+# truncated download or an HTTP error body written by a curl run without -f.
+MODEL_MIN_SIZE_BYTES = 1_000_000
+
 
 def model_path(model: str = DEFAULT_MODEL) -> Path:
     return MODEL_DIR / f"ggml-{model}.bin"
@@ -26,6 +29,10 @@ def model_path(model: str = DEFAULT_MODEL) -> Path:
 
 def model_url(model: str = DEFAULT_MODEL) -> str:
     return f"{MODEL_URL_BASE}/ggml-{model}.bin"
+
+
+def model_present(path: Path) -> bool:
+    return path.exists() and path.stat().st_size >= MODEL_MIN_SIZE_BYTES
 
 
 def find_binary() -> str | None:
@@ -78,22 +85,6 @@ def extract_audio(video_path: str, out_path: Path) -> Path:
     return out_path
 
 
-def audio_duration(audio_path: Path) -> float:
-    if shutil.which("ffprobe") is None:
-        raise SystemExit("ffprobe is not installed. Install with: brew install ffmpeg")
-
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format",
-         str(audio_path.resolve())],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise SystemExit(f"ffprobe failed: {result.stderr.strip()}")
-    fmt = json.loads(result.stdout or "{}").get("format", {})
-    return float(fmt.get("duration") or 0.0)
-
-
 def transcribe_video(
     video_path: str,
     audio_out: Path,
@@ -108,10 +99,10 @@ def transcribe_video(
         )
 
     model_file = model_path(model)
-    if not model_file.exists():
+    if not model_present(model_file):
         raise SystemExit(
             f"Whisper model not found at {model_file}. "
-            f"Download it with: curl -L --create-dirs -o {model_file} {model_url(model)}"
+            f"Download it with: curl -fL --create-dirs -o {model_file} {model_url(model)}"
         )
 
     print("[watch] extracting audio for local whisper.cpp…", file=sys.stderr)
