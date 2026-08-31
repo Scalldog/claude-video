@@ -547,16 +547,20 @@ def extract_scene_or_uniform(
 
         budget = cap if max_frames is not None else target_frames
         topup: list[dict] = []
+        topup_candidate_count = 0
         if len(selected) < int(budget * SCENE_TOPUP_FRACTION):
-            topup = extract(
+            shortfall = budget - len(selected)
+            topup_candidates = extract(
                 video_path,
                 out_dir / "topup",
                 fps=fps,
                 resolution=resolution,
-                max_frames=budget - len(selected),
+                max_frames=budget,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
             )
+            topup = _even_sample(topup_candidates, shortfall)
+            topup_candidate_count = len(topup)
             if dedup:
                 topup, n_topup_dropped = dedupe_perceptual(topup)
                 n_dropped += n_topup_dropped
@@ -566,7 +570,7 @@ def extract_scene_or_uniform(
 
         return selected, {
             "engine": "scene+uniform" if topup else "scene",
-            "candidate_count": scene_count,
+            "candidate_count": scene_count + topup_candidate_count,
             "deduped_count": n_dropped,
             "topup_count": len(topup),
             "selected_count": len(selected),

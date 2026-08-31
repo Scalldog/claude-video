@@ -1,6 +1,7 @@
 """Keyframe engine + preserved scene/uniform fallbacks."""
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import frames
@@ -97,8 +98,72 @@ def test_scene_selection_tops_up_toward_budget(tmp_path):
 
 
 def test_frames_uses_fps_mode_not_removed_vsync():
-    import subprocess
-
     source = Path(frames.__file__).read_text(encoding="utf-8")
     assert '"-vsync"' not in source
     assert source.count('"-fps_mode"') == 2
+
+
+def _build_cuts_then_static_clip(tmp_path: Path, cuts_seg: float, tail_duration: float) -> Path:
+    """9 cuts followed by a static tail, concatenated into one clip.
+
+    Scene changes only exist in the leading cuts segment, so any frame in the
+    tail must come from the top-up pass — this isolates top-up coverage from
+    the scene engine's own spread."""
+    from conftest import build_cut_clip, build_static_clip
+
+    cuts = tmp_path / "cuts.mp4"
+    tail = tmp_path / "tail.mp4"
+    build_cut_clip(cuts, n=9, seg=cuts_seg)
+    build_static_clip(tail, duration=tail_duration)
+    combined = tmp_path / "cuts_then_static.mp4"
+    filelist = tmp_path / "concat.txt"
+    filelist.write_text(f"file '{cuts}'\nfile '{tail}'\n")
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(filelist),
+            "-c", "copy", str(combined),
+        ],
+        check=True,
+    )
+    return combined
+
+
+def test_topup_covers_the_tail_of_the_range(tmp_path: Path):
+    """The top-up pass must span the whole clip, not stop short partway
+    through — a `-frames:v N` cap on a single ffmpeg pass makes it stop after
+    N *output* frames rather than spreading N frames across the range, so a
+    naive `max_frames=shortfall` request truncates before reaching the end."""
+    clip = _build_cuts_then_static_clip(tmp_path, cuts_seg=0.4, tail_duration=21.4)
+    meta = frames.get_metadata(str(clip))
+    duration = meta["duration_seconds"]
+    fps, target = frames.auto_fps(duration, max_frames=25)
+
+    out, frame_meta = frames.extract_scene_or_uniform(
+        str(clip), tmp_path / "f", fps=fps, target_frames=target,
+        max_frames=25, dedup=False,
+    )
+
+    assert frame_meta["engine"] == "scene+uniform"
+    assert frame_meta["topup_count"] > 0
+    last_ts = max(fr["timestamp_seconds"] for fr in out)
+    assert last_ts >= duration - 3.0, (
+        f"last selected frame at {last_ts}s, clip is {duration}s — top-up stopped short of the tail"
+    )
+
+
+def test_topup_candidate_count_reconciles_with_selected_and_deduped(tmp_path: Path):
+    """Guards against the report-line arithmetic going incoherent (e.g. more
+    frames selected than candidates offered): on any top-up run,
+    selected + deduped must equal the reported candidate count."""
+    clip = _build_cuts_then_static_clip(tmp_path, cuts_seg=0.4, tail_duration=21.4)
+    meta = frames.get_metadata(str(clip))
+    fps, target = frames.auto_fps(meta["duration_seconds"], max_frames=25)
+
+    out, frame_meta = frames.extract_scene_or_uniform(
+        str(clip), tmp_path / "f", fps=fps, target_frames=target, max_frames=25,
+    )
+
+    assert frame_meta["topup_count"] > 0
+    assert frame_meta["selected_count"] <= frame_meta["candidate_count"]
+    assert frame_meta["selected_count"] + frame_meta["deduped_count"] == frame_meta["candidate_count"]
