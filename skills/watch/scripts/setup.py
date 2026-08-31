@@ -174,15 +174,12 @@ def offer_model_download(model: str = localstt.DEFAULT_MODEL) -> bool:
 def _status() -> dict:
     """Structured preflight snapshot for whisper.cpp readiness.
 
-    `status` describes the *ideal* state, so a completed-but-modelless
-    install still reports `needs_model` — that's the agent's cue to
-    encourage downloading it.
+    `status` is one of "ready", "needs_model", "needs_install", or
+    "needs_install_and_model"; a completed-but-modelless install still
+    reports `needs_model`.
 
-    `can_proceed` is the operational gate: /watch can run as long as the
-    binaries are present AND either the model is there or setup was already
-    completed once (a captions-only workflow, declining the 1.5 GB download,
-    is a legitimate deliberate choice). A modelless user who completed setup
-    is NOT nagged on every call; a genuine first run is.
+    `can_proceed` is true when no binaries are missing and either the model
+    is present or setup has already completed once.
     """
     missing = _check_binaries()
     model_file = localstt.model_path(localstt.DEFAULT_MODEL)
@@ -218,12 +215,11 @@ def cmd_check() -> int:
 
     Exit 0 with no output when /watch can run: ffmpeg, ffprobe, yt-dlp, and
     whisper-cli are all on PATH, and either the whisper.cpp model is present
-    or setup has already been completed once. A modelless user who finished
-    setup is never nagged again on follow-up calls.
+    or setup has already completed once.
 
     On a state that blocks /watch, print one actionable line to stderr:
       2 → binaries missing
-      3 → genuine first run with no model (encourage downloading one)
+      3 → no model present, and setup has not completed
       4 → both missing
     """
     s = _status()
