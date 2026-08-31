@@ -30,6 +30,7 @@ def build_cut_clip(
     seg: float = 0.4,
     size: str = "320x240",
     fps: int = 10,
+    audio: bool = False,
 ) -> None:
     """Concatenate ``n`` solid-color segments into one clip with ``n`` cuts.
 
@@ -44,14 +45,23 @@ def build_cut_clip(
         inputs += ["-f", "lavfi", "-t", str(seg), "-i", f"color=c={color}:s={size}:r={fps}"]
     streams = "".join(f"[{i}:v]" for i in range(n))
     filt = f"{streams}concat=n={n}:v=1:a=0[out]"
-    _run([
+    cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         *inputs,
-        "-filter_complex", filt, "-map", "[out]",
+    ]
+    map_args = ["-map", "[out]"]
+    if audio:
+        cmd += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={n * seg}"]
+        map_args += ["-map", str(n)]
+    cmd += [
+        "-filter_complex", filt, *map_args,
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-force_key_frames", f"expr:gte(t,n_forced*{seg})",
-        str(path),
-    ])
+    ]
+    if audio:
+        cmd += ["-c:a", "aac", "-shortest"]
+    cmd += [str(path)]
+    _run(cmd)
 
 
 def build_static_clip(
