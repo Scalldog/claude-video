@@ -60,6 +60,24 @@ Invoked as:
 whisper-cli -m <model.bin> -f <audio.wav> -ovtt -of <workdir>/transcript
 ```
 
+### Measured, not assumed
+
+Benchmarked end to end on 2026-09-01 against a 15:12 (912 s) 1080p screencast,
+`large-v3-turbo`, Apple Silicon:
+
+| Stage | Wall clock |
+|---|---|
+| ffmpeg audio extract to 16 kHz mono WAV (28 MB) | 0.6 s |
+| `whisper-cli` transcription | 41.7 s |
+
+That is ~22x realtime. CPU sat at 31% and the run reported `ggml_metal_free`,
+confirming inference ran on the GPU. No chunking, no retries, no network.
+
+The seam was verified in the same run: the emitted VTT fed the unmodified
+`transcribe.parse_vtt()` and produced 147 segments, 0 malformed, final segment
+ending at 911.94 s against a 912.0 s source. Domain vocabulary transcribed
+correctly. `transcribe.py` requires no changes.
+
 ### Model acquisition
 
 Homebrew does not ship model files. They are a separate download, verified
