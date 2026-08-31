@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Setup / preflight for /watch.
+"""Setup / preflight for /watch's whisper.cpp transcription.
 
 Modes:
   setup.py --check      Silent preflight. Exit 0 if ready, 2/3/4 on failure.
   setup.py --json       Machine-readable status for Claude to parse.
-  setup.py              Installer. Auto-installs deps, scaffolds .env, marks SETUP_COMPLETE.
+  setup.py              Installer. Auto-installs deps, offers the model download.
 
 Design:
 - Silent on success: --check exits 0 with no output when everything's ready so
   that /watch doesn't spam "setup is complete" on every turn.
-- Idempotent: re-running the installer is safe — it never clobbers existing
-  keys and only appends missing ones.
-- SETUP_COMPLETE=true in ~/.config/watch/.env tells us the user has been
-  through a successful installer run at least once.
+- Idempotent: re-running the installer is safe — it never clobbers an
+  existing config file.
 - Never sudo. On macOS, auto-install via brew. Elsewhere, print exact commands.
-- Never write an API key to disk automatically — only scaffold placeholders.
+- Never download the whisper.cpp model automatically — it is ~1.5 GB, so
+  setup.py only prints the command and leaves running it to the user.
 """
 from __future__ import annotations
 
 import json
-import os
 import platform
 import shutil
 import subprocess
@@ -30,32 +28,21 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from config import get_config  # noqa: E402
+import localstt  # noqa: E402
 
 
-REQUIRED_BINARIES = ["ffmpeg", "ffprobe", "yt-dlp"]
 CONFIG_DIR = Path.home() / ".config" / "watch"
 CONFIG_FILE = CONFIG_DIR / ".env"
-ENV_TEMPLATE = """# /watch API configuration
-#
-# Whisper transcription fallback — used only when yt-dlp cannot get captions
-# (or when you point /watch at a local file with no subtitles).
-#
-# Groq is preferred: it runs whisper-large-v3 at a fraction of OpenAI's price
-# and is faster in practice. OpenAI is the compatible fallback.
-#
-# Get a Groq key:  https://console.groq.com/keys
-# Get an OpenAI key:  https://platform.openai.com/api-keys
-#
-# Leave both blank to disable Whisper — /watch will still work, but videos
-# without native captions will come back frames-only.
-
-GROQ_API_KEY=
-OPENAI_API_KEY=
+ENV_TEMPLATE = """# /watch configuration
 
 # Default watch behavior (the /watch first-run wizard sets this for you).
 # Allowed values: transcript | efficient | balanced | token-burner
 # Keep the value on its own line with no trailing comment.
 # WATCH_DETAIL=balanced
+
+# Set by setup.py once ffmpeg, whisper-cli, and the whisper.cpp model are
+# all in place.
+# SETUP_COMPLETE=true
 """
 
 
@@ -64,66 +51,10 @@ def _which(name: str) -> str | None:
 
 
 def _check_binaries() -> list[str]:
-    return [b for b in REQUIRED_BINARIES if not _which(b)]
-
-
-_PERM_WARNED: set[str] = set()
-
-
-def _check_file_permissions(path: Path) -> None:
-    """Warn to stderr (once per path per process) if a secrets file is
-    world/group readable."""
-    key = str(path)
-    if key in _PERM_WARNED:
-        return
-    try:
-        mode = path.stat().st_mode
-        if mode & 0o044:
-            _PERM_WARNED.add(key)
-            sys.stderr.write(
-                f"[watch] WARNING: {path} is readable by other users. "
-                f"Run: chmod 600 {path}\n"
-            )
-            sys.stderr.flush()
-    except OSError:
-        pass
-
-
-def _read_env_key(name: str) -> str | None:
-    value = os.environ.get(name)
-    if value and value.strip():
-        return value.strip()
-    if not CONFIG_FILE.exists():
-        return None
-    _check_file_permissions(CONFIG_FILE)
-    try:
-        for line in CONFIG_FILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, raw = line.partition("=")
-            if key.strip() != name:
-                continue
-            raw = raw.strip()
-            if len(raw) >= 2 and raw[0] in ('"', "'") and raw[-1] == raw[0]:
-                raw = raw[1:-1]
-            return raw or None
-    except OSError:
-        return None
-    return None
-
-
-def _have_api_key() -> tuple[bool, str | None]:
-    if _read_env_key("GROQ_API_KEY"):
-        return True, "groq"
-    if _read_env_key("OPENAI_API_KEY"):
-        return True, "openai"
-    return False, None
-
-
-def is_first_run() -> bool:
-    """True if the installer hasn't completed successfully yet."""
-    return _read_env_key("SETUP_COMPLETE") != "true"
+    missing = [b for b in ("ffmpeg", "ffprobe") if _which(b) is None]
+    if localstt.find_binary() is None:
+        missing.append("whisper-cli")
+    return missing
 
 
 def _scaffold_env() -> bool:
@@ -142,8 +73,8 @@ def _scaffold_env() -> bool:
 def _write_setup_complete() -> None:
     """Idempotently append SETUP_COMPLETE=true to .env.
 
-    Used only after a fully successful install (deps + key). Future sessions
-    detect this marker to skip wizard-style UI and stay silent.
+    Used only after a fully successful install (deps + model). Future
+    sessions detect this marker to skip wizard-style UI and stay silent.
     """
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     existing = ""
@@ -169,9 +100,9 @@ def _brew_pkg(missing: list[str]) -> list[str]:
         if bin_name in ("ffmpeg", "ffprobe"):
             if "ffmpeg" not in pkgs:
                 pkgs.append("ffmpeg")
-        elif bin_name == "yt-dlp":
-            if "yt-dlp" not in pkgs:
-                pkgs.append("yt-dlp")
+        elif bin_name == "whisper-cli":
+            if "whisper-cpp" not in pkgs:
+                pkgs.append("whisper-cpp")
         else:
             pkgs.append(bin_name)
     return pkgs
@@ -199,8 +130,11 @@ def _install_hint_linux(missing: list[str]) -> str:
     hints = []
     if "ffmpeg" in pkgs:
         hints.append("apt: `sudo apt install ffmpeg` or dnf: `sudo dnf install ffmpeg`")
-    if "yt-dlp" in pkgs:
-        hints.append("`pipx install yt-dlp` (recommended) or `pip install --user yt-dlp`")
+    if "whisper-cpp" in pkgs:
+        hints.append(
+            "`brew install whisper-cpp` (Homebrew on Linux) or build from source: "
+            "https://github.com/ggerganov/whisper.cpp"
+        )
     return "\n  ".join(hints) if hints else "nothing to install"
 
 
@@ -209,47 +143,42 @@ def _install_hint_windows(missing: list[str]) -> str:
     hints = []
     if "ffmpeg" in pkgs:
         hints.append("winget: `winget install Gyan.FFmpeg`")
-    if "yt-dlp" in pkgs:
-        hints.append("winget: `winget install yt-dlp.yt-dlp` or pip: `pip install --user yt-dlp`")
+    if "whisper-cpp" in pkgs:
+        hints.append("build from source: https://github.com/ggerganov/whisper.cpp")
     return "\n  ".join(hints) if hints else "nothing to install"
 
 
+def offer_model_download(model: str = localstt.DEFAULT_MODEL) -> bool:
+    dest = localstt.model_path(model)
+    url = localstt.model_url(model)
+    print(f"[setup] model {dest.name} is not present (~1.5 GB).")
+    print(f"[setup] download it with:\n  curl -L --create-dirs -o {dest} {url}")
+    return dest.exists()
+
+
 def _status() -> dict:
-    """Structured preflight snapshot.
-
-    `status` describes the *ideal* state (a Whisper key is encouraged), so a
-    keyless install still reports `needs_key` on the very first run — that's
-    the agent's cue to encourage adding one.
-
-    `can_proceed` is the operational gate: /watch can run as long as the
-    binaries are present AND the user has either set a key or already finished
-    setup (consciously opting out of Whisper). A keyless user who completed
-    setup is NOT nagged on every call.
-    """
+    """Structured preflight snapshot for whisper.cpp readiness."""
     missing = _check_binaries()
-    has_key, backend = _have_api_key()
-    setup_complete = not is_first_run()
-
-    if not missing and has_key:
-        status = "ready"
-    elif missing and not has_key:
-        status = "needs_install_and_key"
-    elif missing:
-        status = "needs_install"
-    else:
-        status = "needs_key"
-
-    can_proceed = (not missing) and (has_key or setup_complete)
-
+    model_file = localstt.model_path(localstt.DEFAULT_MODEL)
+    model_present = model_file.exists()
     cfg = get_config()
+
+    if missing and not model_present:
+        state = "needs_install_and_model"
+    elif missing:
+        state = "needs_install"
+    elif not model_present:
+        state = "needs_model"
+    else:
+        state = "ready"
+
     return {
-        "status": status,
-        "can_proceed": can_proceed,
-        "first_run": not setup_complete,
-        "setup_complete": setup_complete,
+        "status": state,
+        "can_proceed": not missing and model_present,
+        "first_run": not CONFIG_FILE.exists(),
         "missing_binaries": missing,
-        "whisper_backend": backend,
-        "has_api_key": has_key,
+        "model_present": model_present,
+        "model_path": str(model_file),
         "config_file": str(CONFIG_FILE),
         "watch_detail": cfg["detail"],
         "platform": platform.system(),
@@ -259,13 +188,12 @@ def _status() -> dict:
 def cmd_check() -> int:
     """Silent-on-success preflight.
 
-    Exit 0 with no output when /watch can run. A keyless user who already
-    finished setup (SETUP_COMPLETE=true) counts as ready — Whisper is
-    encouraged, not required — so they are never nagged on follow-up calls.
+    Exit 0 with no output when ffmpeg, ffprobe, and whisper-cli are all on
+    PATH and the whisper.cpp model file is present.
 
     On a state that blocks /watch, print one actionable line to stderr:
       2 → binaries missing
-      3 → genuine first run with no API key (encourage one)
+      3 → model file missing
       4 → both missing
     """
     s = _status()
@@ -275,8 +203,8 @@ def cmd_check() -> int:
     parts = []
     if s["missing_binaries"]:
         parts.append(f"missing binaries: {', '.join(s['missing_binaries'])}")
-    if not s["has_api_key"] and not s["setup_complete"]:
-        parts.append("no Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)")
+    if not s["model_present"]:
+        parts.append(f"whisper.cpp model missing: {s['model_path']}")
     installer = Path(__file__).resolve()
     sys.stderr.write(
         f"[watch] setup incomplete ({'; '.join(parts)}). "
@@ -284,7 +212,7 @@ def cmd_check() -> int:
     )
     sys.stderr.flush()
 
-    if s["missing_binaries"] and not s["has_api_key"]:
+    if s["missing_binaries"] and not s["model_present"]:
         return 4
     if s["missing_binaries"]:
         return 2
@@ -331,22 +259,14 @@ def cmd_install() -> int:
     else:
         print(f"[setup] config exists: {CONFIG_FILE}")
 
-    has_key, backend = _have_api_key()
-    if has_key:
+    if localstt.model_path(localstt.DEFAULT_MODEL).exists():
         _write_setup_complete()
-        print(f"[setup] ready. whisper backend: {backend}")
+        print("[setup] ready. whisper.cpp model is present.")
         if installed_deps:
             print("[setup] installed dependencies; /watch is fully set up.")
         return 0
 
-    print("")
-    print("[setup] one step left: add a Whisper API key.")
-    print("")
-    print(f"  Edit {CONFIG_FILE} and set either:")
-    print("    GROQ_API_KEY=...    (preferred — cheaper, faster; get one at console.groq.com/keys)")
-    print("    OPENAI_API_KEY=...  (fallback; get one at platform.openai.com/api-keys)")
-    print("")
-    print("  Without a key, /watch still works but videos without captions come back frames-only.")
+    offer_model_download()
     return 3
 
 
