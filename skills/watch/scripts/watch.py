@@ -363,10 +363,12 @@ def main() -> int:
         print(transcript_text)
         print("```")
     elif detail == "transcript":
+        setup_py = SCRIPT_DIR / "setup.py"
         print(
-            "_No transcript available at transcript detail. Captions were missing and Whisper was "
-            "unavailable or failed, so there is no visual fallback here. Re-run with "
-            "`--detail balanced` for frames._"
+            "_No transcript available at transcript detail. Captions were missing and the Whisper "
+            "fallback was unavailable (whisper-cli or its model is missing, or `--no-transcript` was "
+            "used) or failed, so there is no visual fallback here. "
+            f"Run `python3 {setup_py}` to enable Whisper, or re-run with `--detail balanced` for frames._"
         )
     elif focused and dl.get("subtitle_path"):
         print(f"_No transcript lines fell inside {format_time(effective_start)} → {format_time(effective_end)}._")

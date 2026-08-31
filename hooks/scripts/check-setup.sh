@@ -41,7 +41,7 @@ if [[ "$SETUP_COMPLETE" == "true" && -n "$HAS_FFMPEG" && -n "$HAS_YTDLP" && -n "
 fi
 
 if [[ -z "$HAS_FFMPEG" || -z "$HAS_YTDLP" || -z "$HAS_WHISPER" ]]; then
-  echo "/watch: needs ffmpeg + yt-dlp + whisper-cpp. Run \`brew install ffmpeg yt-dlp whisper-cpp\`."
+  echo "/watch: needs ffmpeg + yt-dlp + whisper-cpp. Run \`python3 \$CLAUDE_PLUGIN_ROOT/skills/watch/scripts/setup.py\` once to install and scaffold config."
 elif [[ ! -f "$MODEL" ]]; then
   echo "/watch: model missing. Run \`python3 \$CLAUDE_PLUGIN_ROOT/skills/watch/scripts/setup.py\` for the download command."
 else
