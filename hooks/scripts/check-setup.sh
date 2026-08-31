@@ -28,9 +28,9 @@ read_key() {
       $1 == k {
         sub(/^[[:space:]]*/, "", $2); sub(/[[:space:]]*$/, "", $2);
         gsub(/^["'\'']|["'\'']$/, "", $2);
-        print $2; exit
+        print $2
       }
-    ' "$CONFIG_FILE"
+    ' "$CONFIG_FILE" | tail -1
   fi
 }
 
